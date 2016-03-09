@@ -503,7 +503,7 @@ namespace obj {
 		template<typename Clock, typename Duration>
 		std::cv_status wait_until_impl(mutex &lock,
 				const std::chrono::time_point<Clock,
-				Duration> &rel_time)
+				Duration> &abs_time)
 		{
 			PMEMobjpool *pop = pmemobj_pool_by_ptr(this);
 
@@ -511,7 +511,7 @@ namespace obj {
 			const typename Clock::time_point their_now =
 					Clock::now();
 			const clock_type::time_point my_now = clock_type::now();
-			const auto delta = rel_time - their_now;
+			const auto delta = abs_time - their_now;
 			const auto my_rel = my_now + delta;
 
 			struct timespec ts =

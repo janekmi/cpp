@@ -195,7 +195,6 @@ namespace obj {
 		timed_mutex(const timed_mutex&) = delete;
 
 	private:
-
 		/**
 		 * Internal implementation of the timedlock call.
 		 */
