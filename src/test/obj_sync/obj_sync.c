@@ -43,7 +43,15 @@
 #include "list.h"
 #include "obj.h"
 
+#define MAX_THREAD_NUM 200
+
 #define	DATA_SIZE 128
+
+#define THREAD_USLEEP 1000LL
+
+#define NANO_PER_MICRO 1000LL
+#define NANO_PER_ONE 1000000000LL
+
 
 #define	FATAL_USAGE() FATAL("usage: obj_sync [mrc] <num_threads> <runs>\n")
 
@@ -209,6 +217,66 @@ rwlock_check_worker(void *arg)
 }
 
 /*
+ * timed_write_worker -- (internal) write data with mutex and wait
+ */
+static void *
+timed_write_worker(void *arg)
+{
+	int iarg = (int)(uintptr_t)arg;
+	int ret;
+	if ((ret = pmemobj_mutex_lock(&Mock_pop, &Test_obj->mutex))) {
+		return NULL;
+	}
+	memset(Test_obj->data, iarg, DATA_SIZE);
+	if (iarg % 2 == 0) {
+		usleep(THREAD_USLEEP);
+	}
+
+	if (pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex))
+		ERR("pmemobj_mutex_unlock");
+
+	return NULL;
+}
+
+/*
+ * timed_check_worker -- (internal) check consistency with mutex
+ */
+static void *
+timed_check_worker(void *arg)
+{
+	return NULL;
+	usleep(THREAD_USLEEP / 2);
+
+	int iarg = (int)(uintptr_t)arg;
+	struct timespec abs_time;
+	clock_gettime(CLOCK_REALTIME, &abs_time);
+	unsigned long nanos = abs_time.tv_nsec;
+	if (iarg % 2 == 0) {
+		nanos += THREAD_USLEEP * MAX_THREAD_NUM * NANO_PER_MICRO;
+	} else {
+		nanos += THREAD_USLEEP / 10 * NANO_PER_MICRO;
+	}
+	abs_time.tv_sec += nanos / NANO_PER_ONE;
+	abs_time.tv_nsec = nanos % NANO_PER_ONE;
+
+	int ret = pmemobj_mutex_timedlock(&Mock_pop, &Test_obj->mutex, &abs_time);
+	if (ret == ETIMEDOUT) {
+		return NULL;
+	} else if (ret != 0) {
+		ERR("pmemobj_mutex_timedlock ret: %d", ret);
+		return NULL;
+	}
+
+	uint8_t val = Test_obj->data[0];
+	for (int i = 1; i < DATA_SIZE; i++)
+		ASSERTeq(Test_obj->data[i], val);
+	if (pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex))
+		ERR("pmemobj_mutex_unlock");
+
+	return NULL;
+}
+
+/*
  * cleanup -- (internal) clean up after each run
  */
 static void
@@ -225,6 +293,9 @@ cleanup(char test_type)
 		case 'c':
 			pthread_mutex_destroy(&Test_obj->mutex.pmemmutex.mutex);
 			pthread_cond_destroy(&Test_obj->cond.pmemcond.cond);
+			break;
+		case 't':
+			pthread_mutex_destroy(&Test_obj->mutex.pmemmutex.mutex);
 			break;
 		default:
 			FATAL_USAGE();
@@ -264,14 +335,18 @@ main(int argc, char *argv[])
 			writer = cond_write_worker;
 			checker = cond_check_worker;
 			break;
+		case 't':
+			writer = timed_write_worker;
+			checker = timed_check_worker;
+			break;
 		default:
 			FATAL_USAGE();
 
 	}
 
 	unsigned long num_threads = strtoul(argv[2], NULL, 10);
-	if (num_threads > 200)
-		FATAL("Do not use more than 200 threads.\n");
+	if (num_threads > MAX_THREAD_NUM)
+		FATAL("Do not use more than %d threads.\n", MAX_THREAD_NUM);
 
 	unsigned long runs = strtoul(argv[3], NULL, 10);
 
@@ -294,7 +369,7 @@ main(int argc, char *argv[])
 			PTHREAD_CREATE(&write_threads[i], NULL, writer,
 				(void *)(uintptr_t)i);
 			PTHREAD_CREATE(&check_threads[i], NULL, checker,
-				NULL);
+				(void *)(uintptr_t)i);
 		}
 		for (int i = 0; i < num_threads; i++) {
 			PTHREAD_JOIN(write_threads[i], NULL);
