@@ -37,7 +37,10 @@
 #ifndef PMEMOBJ_TIMED_MUTEX_HPP
 #define PMEMOBJ_TIMED_MUTEX_HPP
 
+#include <chrono>
+
 #include "libpmemobj.h"
+#include "libpmemobj/detail/conversions.hpp"
 
 namespace nvml {
 
