@@ -43,7 +43,14 @@
 #include "list.h"
 #include "obj.h"
 
+#define	MAX_THREAD_NUM 200
+
 #define	DATA_SIZE 128
+
+#define	LOCKED_MUTEX 1
+#define	NANO_PER_ONE 1000000000LL
+#define	TIMEOUT (NANO_PER_ONE / 1000LL)
+
 
 #define	FATAL_USAGE() FATAL("usage: obj_sync [mrc] <num_threads> <runs>\n")
 
@@ -55,7 +62,13 @@ static PMEMobjpool Mock_pop;
 
 /* the tested object containing persistent synchronization primitives */
 static struct mock_obj {
-	PMEMmutex mutex;
+	union {
+		struct {
+			PMEMmutex mutex;
+			PMEMmutex mutex_locked;
+		};
+		PMEMmutex mutex_arr[2];
+	};
 	PMEMcond cond;
 	PMEMrwlock rwlock;
 	int check_data;
@@ -209,6 +222,55 @@ rwlock_check_worker(void *arg)
 }
 
 /*
+ * timed_write_worker -- (internal) intentionally doing nothing
+ */
+static void *
+timed_write_worker(void *arg)
+{
+	return NULL;
+}
+
+/*
+ * timed_check_worker -- (internal) check consistency with mutex
+ */
+static void *
+timed_check_worker(void *arg)
+{
+	int mutex_id = (int)(uintptr_t)arg % 2;
+
+	struct timespec t1, t2, t_diff, abs_time;
+	clock_gettime(CLOCK_REALTIME, &t1);
+	abs_time = t1;
+	abs_time.tv_nsec += TIMEOUT;
+
+	int ret = pmemobj_mutex_timedlock(&Mock_pop,
+			&Test_obj->mutex_arr[mutex_id], &abs_time);
+
+	clock_gettime(CLOCK_REALTIME, &t2);
+
+	if (ret == 0) {
+		ASSERTne(mutex_id, LOCKED_MUTEX);
+		pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex_arr[mutex_id]);
+	} else if (ret == ETIMEDOUT) {
+		ASSERTeq(mutex_id, LOCKED_MUTEX);
+
+		t_diff.tv_sec = t2.tv_sec - t1.tv_sec;
+		t_diff.tv_nsec = t2.tv_nsec - t1.tv_nsec;
+
+		if (t_diff.tv_nsec < 0) {
+			--t_diff.tv_sec;
+			t_diff.tv_nsec += NANO_PER_ONE;
+		}
+		ASSERT(t_diff.tv_sec * NANO_PER_ONE +
+				t_diff.tv_nsec >= TIMEOUT);
+	} else if (ret != 0) {
+		ERR("pmemobj_mutex_timedlock");
+	}
+
+	return NULL;
+}
+
+/*
  * cleanup -- (internal) clean up after each run
  */
 static void
@@ -225,6 +287,12 @@ cleanup(char test_type)
 		case 'c':
 			pthread_mutex_destroy(&Test_obj->mutex.pmemmutex.mutex);
 			pthread_cond_destroy(&Test_obj->cond.pmemcond.cond);
+			break;
+		case 't':
+			pthread_mutex_destroy(&Test_obj->mutex_arr[0].
+					pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->mutex_arr[1].
+					pmemmutex.mutex);
 			break;
 		default:
 			FATAL_USAGE();
@@ -264,14 +332,18 @@ main(int argc, char *argv[])
 			writer = cond_write_worker;
 			checker = cond_check_worker;
 			break;
+		case 't':
+			writer = timed_write_worker;
+			checker = timed_check_worker;
+			break;
 		default:
 			FATAL_USAGE();
 
 	}
 
 	unsigned long num_threads = strtoul(argv[2], NULL, 10);
-	if (num_threads > 200)
-		FATAL("Do not use more than 200 threads.\n");
+	if (num_threads > MAX_THREAD_NUM)
+		FATAL("Do not use more than %d threads.\n", MAX_THREAD_NUM);
 
 	unsigned long runs = strtoul(argv[3], NULL, 10);
 
@@ -284,22 +356,29 @@ main(int argc, char *argv[])
 	Test_obj = MALLOC(sizeof (struct mock_obj));
 	/* zero-initialize the test object */
 	pmemobj_mutex_zero(&Mock_pop, &Test_obj->mutex);
+	pmemobj_mutex_zero(&Mock_pop, &Test_obj->mutex_locked);
 	pmemobj_cond_zero(&Mock_pop, &Test_obj->cond);
 	pmemobj_rwlock_zero(&Mock_pop, &Test_obj->rwlock);
 	Test_obj->check_data = 0;
 	memset(&Test_obj->data, 0, DATA_SIZE);
 
 	for (int run = 0; run < runs; run++) {
+		pmemobj_mutex_lock(&Mock_pop,
+				&Test_obj->mutex_arr[LOCKED_MUTEX]);
+
 		for (int i = 0; i < num_threads; i++) {
 			PTHREAD_CREATE(&write_threads[i], NULL, writer,
 				(void *)(uintptr_t)i);
 			PTHREAD_CREATE(&check_threads[i], NULL, checker,
-				NULL);
+				(void *)(uintptr_t)i);
 		}
 		for (int i = 0; i < num_threads; i++) {
 			PTHREAD_JOIN(write_threads[i], NULL);
 			PTHREAD_JOIN(check_threads[i], NULL);
 		}
+
+		pmemobj_mutex_unlock(&Mock_pop,
+				&Test_obj->mutex_arr[LOCKED_MUTEX]);
 		/* up the run_id counter and cleanup */
 		mock_open_pool(&Mock_pop);
 		cleanup(test_type);
