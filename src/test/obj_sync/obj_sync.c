@@ -62,13 +62,8 @@ static PMEMobjpool Mock_pop;
 
 /* the tested object containing persistent synchronization primitives */
 static struct mock_obj {
-	union {
-		struct {
-			PMEMmutex mutex;
-			PMEMmutex mutex_locked;
-		};
-		PMEMmutex mutex_arr[2];
-	};
+	PMEMmutex mutex;
+	PMEMmutex mutex_locked;
 	PMEMcond cond;
 	PMEMrwlock rwlock;
 	int check_data;
@@ -237,20 +232,20 @@ static void *
 timed_check_worker(void *arg)
 {
 	int mutex_id = (int)(uintptr_t)arg % 2;
+	PMEMmutex *mtx = mutex_id == LOCKED_MUTEX ? &Test_obj->mutex_locked : &Test_obj->mutex;
 
 	struct timespec t1, t2, t_diff, abs_time;
 	clock_gettime(CLOCK_REALTIME, &t1);
 	abs_time = t1;
 	abs_time.tv_nsec += TIMEOUT;
 
-	int ret = pmemobj_mutex_timedlock(&Mock_pop,
-			&Test_obj->mutex_arr[mutex_id], &abs_time);
+	int ret = pmemobj_mutex_timedlock(&Mock_pop, mtx, &abs_time);
 
 	clock_gettime(CLOCK_REALTIME, &t2);
 
 	if (ret == 0) {
 		ASSERTne(mutex_id, LOCKED_MUTEX);
-		pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex_arr[mutex_id]);
+		pmemobj_mutex_unlock(&Mock_pop, mtx);
 	} else if (ret == ETIMEDOUT) {
 		ASSERTeq(mutex_id, LOCKED_MUTEX);
 
@@ -289,10 +284,8 @@ cleanup(char test_type)
 			pthread_cond_destroy(&Test_obj->cond.pmemcond.cond);
 			break;
 		case 't':
-			pthread_mutex_destroy(&Test_obj->mutex_arr[0].
-					pmemmutex.mutex);
-			pthread_mutex_destroy(&Test_obj->mutex_arr[1].
-					pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->mutex.pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->mutex_locked.pmemmutex.mutex);
 			break;
 		default:
 			FATAL_USAGE();
@@ -363,8 +356,10 @@ main(int argc, char *argv[])
 	memset(&Test_obj->data, 0, DATA_SIZE);
 
 	for (int run = 0; run < runs; run++) {
-		pmemobj_mutex_lock(&Mock_pop,
-				&Test_obj->mutex_arr[LOCKED_MUTEX]);
+		if (test_type == 't') {
+			pmemobj_mutex_lock(&Mock_pop,
+					&Test_obj->mutex_locked);
+		}
 
 		for (int i = 0; i < num_threads; i++) {
 			PTHREAD_CREATE(&write_threads[i], NULL, writer,
@@ -377,8 +372,10 @@ main(int argc, char *argv[])
 			PTHREAD_JOIN(check_threads[i], NULL);
 		}
 
-		pmemobj_mutex_unlock(&Mock_pop,
-				&Test_obj->mutex_arr[LOCKED_MUTEX]);
+		if (test_type == 't') {
+			pmemobj_mutex_unlock(&Mock_pop,
+					&Test_obj->mutex_locked);
+		}
 		/* up the run_id counter and cleanup */
 		mock_open_pool(&Mock_pop);
 		cleanup(test_type);
