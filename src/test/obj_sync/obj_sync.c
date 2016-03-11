@@ -43,13 +43,13 @@
 #include "list.h"
 #include "obj.h"
 
-#define MAX_THREAD_NUM 200
+#define	MAX_THREAD_NUM 200
 
 #define	DATA_SIZE 128
 
-#define LOCKED_MUTEX 1
-#define NANO_PER_ONE 1000000000LL
-#define TIMEOUT (NANO_PER_ONE / 1000LL)
+#define	LOCKED_MUTEX 1
+#define	NANO_PER_ONE 1000000000LL
+#define	TIMEOUT (NANO_PER_ONE / 1000LL)
 
 
 #define	FATAL_USAGE() FATAL("usage: obj_sync [mrc] <num_threads> <runs>\n")
@@ -255,13 +255,14 @@ timed_check_worker(void *arg)
 		ASSERTeq(mutex_id, LOCKED_MUTEX);
 
 		t_diff.tv_sec = t2.tv_sec - t1.tv_sec;
-		t_diff.tv_nsec = t2.tv_nsec -t1.tv_nsec;
+		t_diff.tv_nsec = t2.tv_nsec - t1.tv_nsec;
 
 		if (t_diff.tv_nsec < 0) {
 			--t_diff.tv_sec;
 			t_diff.tv_nsec += NANO_PER_ONE;
 		}
-		ASSERT(t_diff.tv_sec * NANO_PER_ONE + t_diff.tv_nsec >= TIMEOUT);
+		ASSERT(t_diff.tv_sec * NANO_PER_ONE +
+				t_diff.tv_nsec >= TIMEOUT);
 	} else if (ret != 0) {
 		ERR("pmemobj_mutex_timedlock");
 	}
@@ -288,8 +289,10 @@ cleanup(char test_type)
 			pthread_cond_destroy(&Test_obj->cond.pmemcond.cond);
 			break;
 		case 't':
-			pthread_mutex_destroy(&Test_obj->mutex_arr[0].pmemmutex.mutex);
-			pthread_mutex_destroy(&Test_obj->mutex_arr[1].pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->mutex_arr[0].
+					pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->mutex_arr[1].
+					pmemmutex.mutex);
 			break;
 		default:
 			FATAL_USAGE();
@@ -360,7 +363,8 @@ main(int argc, char *argv[])
 	memset(&Test_obj->data, 0, DATA_SIZE);
 
 	for (int run = 0; run < runs; run++) {
-		pmemobj_mutex_lock(&Mock_pop, &Test_obj->mutex_arr[LOCKED_MUTEX]);
+		pmemobj_mutex_lock(&Mock_pop,
+				&Test_obj->mutex_arr[LOCKED_MUTEX]);
 
 		for (int i = 0; i < num_threads; i++) {
 			PTHREAD_CREATE(&write_threads[i], NULL, writer,
@@ -373,7 +377,8 @@ main(int argc, char *argv[])
 			PTHREAD_JOIN(check_threads[i], NULL);
 		}
 
-		pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex_arr[LOCKED_MUTEX]);
+		pmemobj_mutex_unlock(&Mock_pop,
+				&Test_obj->mutex_arr[LOCKED_MUTEX]);
 		/* up the run_id counter and cleanup */
 		mock_open_pool(&Mock_pop);
 		cleanup(test_type);
