@@ -47,10 +47,9 @@
 
 #define	DATA_SIZE 128
 
-#define THREAD_USLEEP 1000LL
-
-#define NANO_PER_MICRO 1000LL
+#define LOCKED_MUTEX 1
 #define NANO_PER_ONE 1000000000LL
+#define TIMEOUT (NANO_PER_ONE / 1000LL)
 
 
 #define	FATAL_USAGE() FATAL("usage: obj_sync [mrc] <num_threads> <runs>\n")
@@ -63,7 +62,13 @@ static PMEMobjpool Mock_pop;
 
 /* the tested object containing persistent synchronization primitives */
 static struct mock_obj {
-	PMEMmutex mutex;
+	union {
+		struct {
+			PMEMmutex mutex;
+			PMEMmutex mutex_locked;
+		};
+		PMEMmutex mutex_arr[2];
+	};
 	PMEMcond cond;
 	PMEMrwlock rwlock;
 	int check_data;
@@ -217,24 +222,11 @@ rwlock_check_worker(void *arg)
 }
 
 /*
- * timed_write_worker -- (internal) write data with mutex and wait
+ * timed_write_worker -- (internal) intentionally doing nothing
  */
 static void *
 timed_write_worker(void *arg)
 {
-	int iarg = (int)(uintptr_t)arg;
-	int ret;
-	if ((ret = pmemobj_mutex_lock(&Mock_pop, &Test_obj->mutex))) {
-		return NULL;
-	}
-	memset(Test_obj->data, iarg, DATA_SIZE);
-	if (iarg % 2 == 0) {
-		usleep(THREAD_USLEEP);
-	}
-
-	if (pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex))
-		ERR("pmemobj_mutex_unlock");
-
 	return NULL;
 }
 
@@ -244,34 +236,35 @@ timed_write_worker(void *arg)
 static void *
 timed_check_worker(void *arg)
 {
-	return NULL;
-	usleep(THREAD_USLEEP / 2);
+	int mutex_id = (int)(uintptr_t)arg % 2;
 
-	int iarg = (int)(uintptr_t)arg;
-	struct timespec abs_time;
-	clock_gettime(CLOCK_REALTIME, &abs_time);
-	unsigned long nanos = abs_time.tv_nsec;
-	if (iarg % 2 == 0) {
-		nanos += THREAD_USLEEP * MAX_THREAD_NUM * NANO_PER_MICRO;
-	} else {
-		nanos += THREAD_USLEEP / 10 * NANO_PER_MICRO;
-	}
-	abs_time.tv_sec += nanos / NANO_PER_ONE;
-	abs_time.tv_nsec = nanos % NANO_PER_ONE;
+	struct timespec t1, t2, t_diff, abs_time;
+	clock_gettime(CLOCK_REALTIME, &t1);
+	abs_time = t1;
+	abs_time.tv_nsec += TIMEOUT;
 
-	int ret = pmemobj_mutex_timedlock(&Mock_pop, &Test_obj->mutex, &abs_time);
-	if (ret == ETIMEDOUT) {
-		return NULL;
+	int ret = pmemobj_mutex_timedlock(&Mock_pop,
+			&Test_obj->mutex_arr[mutex_id], &abs_time);
+
+	clock_gettime(CLOCK_REALTIME, &t2);
+
+	if (ret == 0) {
+		ASSERTne(mutex_id, LOCKED_MUTEX);
+		pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex_arr[mutex_id]);
+	} else if (ret == ETIMEDOUT) {
+		ASSERTeq(mutex_id, LOCKED_MUTEX);
+
+		t_diff.tv_sec = t2.tv_sec - t1.tv_sec;
+		t_diff.tv_nsec = t2.tv_nsec -t1.tv_nsec;
+
+		if (t_diff.tv_nsec < 0) {
+			--t_diff.tv_sec;
+			t_diff.tv_nsec += NANO_PER_ONE;
+		}
+		ASSERT(t_diff.tv_sec * NANO_PER_ONE + t_diff.tv_nsec >= TIMEOUT);
 	} else if (ret != 0) {
-		ERR("pmemobj_mutex_timedlock ret: %d", ret);
-		return NULL;
+		ERR("pmemobj_mutex_timedlock");
 	}
-
-	uint8_t val = Test_obj->data[0];
-	for (int i = 1; i < DATA_SIZE; i++)
-		ASSERTeq(Test_obj->data[i], val);
-	if (pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex))
-		ERR("pmemobj_mutex_unlock");
 
 	return NULL;
 }
@@ -295,7 +288,8 @@ cleanup(char test_type)
 			pthread_cond_destroy(&Test_obj->cond.pmemcond.cond);
 			break;
 		case 't':
-			pthread_mutex_destroy(&Test_obj->mutex.pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->mutex_arr[0].pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->mutex_arr[1].pmemmutex.mutex);
 			break;
 		default:
 			FATAL_USAGE();
@@ -359,12 +353,15 @@ main(int argc, char *argv[])
 	Test_obj = MALLOC(sizeof (struct mock_obj));
 	/* zero-initialize the test object */
 	pmemobj_mutex_zero(&Mock_pop, &Test_obj->mutex);
+	pmemobj_mutex_zero(&Mock_pop, &Test_obj->mutex_locked);
 	pmemobj_cond_zero(&Mock_pop, &Test_obj->cond);
 	pmemobj_rwlock_zero(&Mock_pop, &Test_obj->rwlock);
 	Test_obj->check_data = 0;
 	memset(&Test_obj->data, 0, DATA_SIZE);
 
 	for (int run = 0; run < runs; run++) {
+		pmemobj_mutex_lock(&Mock_pop, &Test_obj->mutex_arr[LOCKED_MUTEX]);
+
 		for (int i = 0; i < num_threads; i++) {
 			PTHREAD_CREATE(&write_threads[i], NULL, writer,
 				(void *)(uintptr_t)i);
@@ -375,6 +372,8 @@ main(int argc, char *argv[])
 			PTHREAD_JOIN(write_threads[i], NULL);
 			PTHREAD_JOIN(check_threads[i], NULL);
 		}
+
+		pmemobj_mutex_unlock(&Mock_pop, &Test_obj->mutex_arr[LOCKED_MUTEX]);
 		/* up the run_id counter and cleanup */
 		mock_open_pool(&Mock_pop);
 		cleanup(test_type);
