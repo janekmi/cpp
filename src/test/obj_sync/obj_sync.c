@@ -232,7 +232,8 @@ static void *
 timed_check_worker(void *arg)
 {
 	int mutex_id = (int)(uintptr_t)arg % 2;
-	PMEMmutex *mtx = mutex_id == LOCKED_MUTEX ? &Test_obj->mutex_locked : &Test_obj->mutex;
+	PMEMmutex *mtx = mutex_id == LOCKED_MUTEX ?
+			&Test_obj->mutex_locked : &Test_obj->mutex;
 
 	struct timespec t1, t2, t_diff, abs_time;
 	clock_gettime(CLOCK_REALTIME, &t1);
@@ -285,7 +286,8 @@ cleanup(char test_type)
 			break;
 		case 't':
 			pthread_mutex_destroy(&Test_obj->mutex.pmemmutex.mutex);
-			pthread_mutex_destroy(&Test_obj->mutex_locked.pmemmutex.mutex);
+			pthread_mutex_destroy(&Test_obj->
+					mutex_locked.pmemmutex.mutex);
 			break;
 		default:
 			FATAL_USAGE();
