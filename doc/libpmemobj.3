@@ -37,7 +37,7 @@
 .\" or
 .\"	groff -man -Tascii libpmemobj.3
 .\"
-.TH libpmemobj 3 "pmemobj API version 0.4.27" "NVM Library"
+.TH libpmemobj 3 "pmemobj API version 0.4.28" "NVM Library"
 .SH NAME
 libpmemobj \- persistent memory transactional object store
 .SH SYNOPSIS
@@ -782,7 +782,9 @@ the mutex is automatically reinitialized and then locked.
 .IP
 The
 .BR pmemobj_mutex_timedlock ()
-performs the same action, but will not wait beyond
+performs the same action as
+.BR pmemobj_mutex_lock (),
+but will not wait beyond
 .I abs_timeout
 to obtain the lock before returning.
 .PP

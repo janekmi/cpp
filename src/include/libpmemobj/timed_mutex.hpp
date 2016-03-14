@@ -199,7 +199,7 @@ namespace obj {
 
 	private:
 		/**
-		 * Internal implementation of the timedlock call.
+		 * Internal implementation of the timed lock call.
 		 */
 		template<typename Clock, typename Duration>
 		  bool
