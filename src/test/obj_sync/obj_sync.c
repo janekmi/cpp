@@ -51,7 +51,6 @@
 #define	NANO_PER_ONE 1000000000LL
 #define	TIMEOUT (NANO_PER_ONE / 1000LL)
 
-
 #define	FATAL_USAGE() FATAL("usage: obj_sync [mrc] <num_threads> <runs>\n")
 
 /* posix thread worker typedef */
@@ -239,6 +238,10 @@ timed_check_worker(void *arg)
 	clock_gettime(CLOCK_REALTIME, &t1);
 	abs_time = t1;
 	abs_time.tv_nsec += TIMEOUT;
+	if (abs_time.tv_nsec > NANO_PER_ONE) {
+		++abs_time.tv_sec;
+		abs_time.tv_nsec -= NANO_PER_ONE;
+	}
 
 	int ret = pmemobj_mutex_timedlock(&Mock_pop, mtx, &abs_time);
 
@@ -259,7 +262,7 @@ timed_check_worker(void *arg)
 		}
 		ASSERT(t_diff.tv_sec * NANO_PER_ONE +
 				t_diff.tv_nsec >= TIMEOUT);
-	} else if (ret != 0) {
+	} else {
 		ERR("pmemobj_mutex_timedlock");
 	}
 

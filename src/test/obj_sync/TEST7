@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2016, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,7 +32,7 @@
 #
 
 #
-# src/test/obj_sync/TEST0 -- unit test for PMEM-resident locks
+# src/test/obj_sync/TEST7 -- unit test for PMEM-resident locks
 #
 export UNITTEST_NAME=obj_sync/TEST7
 export UNITTEST_NUM=7
